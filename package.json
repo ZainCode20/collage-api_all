@@ -3,11 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vercel dev",
-    "deploy": "vercel"
+    "dev": "vercel dev"
   },
   "dependencies": {
-    "sharp": "^0.33.0",
+    "sharp": "^0.32.6",
     "text-to-svg": "^3.4.0"
   },
   "engines": {

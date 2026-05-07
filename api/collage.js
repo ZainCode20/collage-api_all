@@ -27,42 +27,39 @@ export default async function handler(req, res) {
     // 2. FIXED IMAGE FETCHER
     const fetchImage = async (url, width, height) => {
       try {
-        console.log("Fetching:", url);
-
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status} for URL: ${url}`);
-        }
-
-        const contentType = response.headers.get("content-type");
-        if (!contentType || !contentType.startsWith("image")) {
-          throw new Error(`Not an image (got ${contentType}) for URL: ${url}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        if (buffer.length < 1000) {
-          throw new Error(`Buffer too small (${buffer.length} bytes) — likely corrupted: ${url}`);
-        }
-
-        // failOnError: false prevents Sharp from throwing on minor EXIF issues
-        const image = sharp(buffer, { failOnError: false });
-        const metadata = await image.metadata();
-
-        if (!metadata || !metadata.width) {
-          throw new Error(`Invalid image metadata for URL: ${url}`);
-        }
-
-        return await image
-          .resize(width, height, { fit: 'cover' })
-          .toBuffer();
-
-      } catch (e) {
-        throw new Error(`fetchImage failed | URL: ${url} | Reason: ${e.message}`);
+    const response = await fetch(url, {
+      redirect: 'follow',  // ← explicitly follow redirects
+      headers: {
+        // Pretend to be a browser — some hosts block server-side fetches
+        'User-Agent': 'Mozilla/5.0 (compatible; CollageBot/1.0)',
+        'Accept': 'image/webp,image/jpeg,image/png,image/*'
       }
-    };
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // ✅ CHECK MAGIC BYTES — catch HTML/redirect pages masquerading as images
+    const isJPEG = buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF;
+    const isPNG  = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E;
+    const isWEBP = buffer.slice(8, 12).toString('ascii') === 'WEBP';
+
+    if (!isJPEG && !isPNG && !isWEBP) {
+      // Log the first 200 chars so you can see what was actually returned
+      console.error(`Bad buffer for ${url}. First bytes:`, buffer.slice(0, 200).toString('utf8'));
+      throw new Error(`URL did not return a valid image. Got: ${buffer.slice(0, 50).toString('utf8')}`);
+    }
+
+    return await sharp(buffer, { failOnError: false })
+      .resize(width, height, { fit: 'cover' })
+      .toBuffer();
+
+  } catch (e) {
+    throw new Error(`fetchImage failed | ${url} | ${e.message}`);
+  }
+};
 
     // 3. FETCH ALL IMAGES
     const [stain, floor, counter, cabinet, wall] = await Promise.all([

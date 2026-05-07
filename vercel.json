@@ -1,8 +1,15 @@
 {
+  "version": 2,
   "functions": {
     "api/collage.js": {
       "maxDuration": 30,
       "memory": 1024
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/collage.js"
+    }
+  ]
 }

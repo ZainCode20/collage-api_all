@@ -7,6 +7,6 @@
     }
   },
   "rewrites": [
-    { "source": "/generate", "destination": "/api/collage.js" }
+    { "source": "/api/(.*)", "destination": "/api/collage.js" }
   ]
 }

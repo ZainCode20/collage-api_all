@@ -13,118 +13,112 @@ export default async function handler(req, res) {
   try {
     // 1. FONT CHECK
     let fontPath = path.join(process.cwd(), 'api', 'fonts', 'Arial.ttf');
-    if (!fs.existsSync(fontPath)) fontPath = path.join(process.cwd(), 'fonts', 'Arial.ttf'); 
+    if (!fs.existsSync(fontPath)) fontPath = path.join(process.cwd(), 'fonts', 'Arial.ttf');
     if (!fs.existsSync(fontPath)) throw new Error("Font file missing on server.");
-    
+
     const textToSVG = TextToSVG.loadSync(fontPath);
 
     const { stainUrl, floorUrl, counterUrl, cabinetUrl, wallUrl } = req.body;
 
-    // 2. BULLETPROOF IMAGE FETCHER
-// const fetchImage = async (url, width, height) => {
-//   try {
-//     console.log("Fetching:", url);
-
-//     const response = await fetch(url);
-
-//     const contentType = response.headers.get("content-type");
-//     console.log("Content-Type:", contentType);
-
-//     if (!response.ok) {
-//       throw new Error(`HTTP ${response.status}`);
-//     }
-
-//     if (!contentType || !contentType.startsWith("image")) {
-//       throw new Error(`Not an image: ${contentType}`);
-//     }
-
-//     const arrayBuffer = await response.arrayBuffer();
-//     const buffer = Buffer.from(arrayBuffer);
-
-//     console.log("Buffer size:", buffer.length);
-
-//     if (buffer.length < 1000) {
-//       throw new Error("Image too small / corrupted");
-//     }
-
-//     const image = sharp(buffer);
-
-//     // 🔥 FORCE VALIDATION
-//     const metadata = await image.metadata();
-//     console.log("Metadata:", metadata);
-
-//     if (!metadata || !metadata.width) {
-//       throw new Error("Invalid image metadata");
-//     }
-
-//     return await image
-//       .resize(width, height, { fit: 'cover' })
-//       .toBuffer();
-
-//   } catch (e) {
-//     throw new Error(`Failed on image: ${url} | ${e.message}`);
-//   }
-// };
-
-    const image = sharp(buffer, { failOnError: false });
-
-    const metadata = await image.metadata();
-    
-    if (!metadata || !metadata.width) {
-      throw new Error("Invalid image metadata");
+    if (!stainUrl || !floorUrl || !counterUrl || !cabinetUrl || !wallUrl) {
+      return res.status(400).json({ error: 'Missing required image URLs' });
     }
-    
-    return await image
-      .resize(width, height, { fit: 'cover' })
-      .toBuffer();
-    // Fetch images and wait for all to finish
+
+    // 2. FIXED IMAGE FETCHER
+    const fetchImage = async (url, width, height) => {
+      try {
+        console.log("Fetching:", url);
+
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} for URL: ${url}`);
+        }
+
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.startsWith("image")) {
+          throw new Error(`Not an image (got ${contentType}) for URL: ${url}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        if (buffer.length < 1000) {
+          throw new Error(`Buffer too small (${buffer.length} bytes) — likely corrupted: ${url}`);
+        }
+
+        // failOnError: false prevents Sharp from throwing on minor EXIF issues
+        const image = sharp(buffer, { failOnError: false });
+        const metadata = await image.metadata();
+
+        if (!metadata || !metadata.width) {
+          throw new Error(`Invalid image metadata for URL: ${url}`);
+        }
+
+        return await image
+          .resize(width, height, { fit: 'cover' })
+          .toBuffer();
+
+      } catch (e) {
+        throw new Error(`fetchImage failed | URL: ${url} | Reason: ${e.message}`);
+      }
+    };
+
+    // 3. FETCH ALL IMAGES
     const [stain, floor, counter, cabinet, wall] = await Promise.all([
-      fetchImage(stainUrl, 750, 750),
-      fetchImage(floorUrl, 750, 750),
+      fetchImage(stainUrl,   750, 750),
+      fetchImage(floorUrl,   750, 750),
       fetchImage(counterUrl, 750, 750),
       fetchImage(cabinetUrl, 360, 500),
-      fetchImage(wallUrl, 360, 500)
+      fetchImage(wallUrl,    360, 500),
     ]);
 
-    // 3. TEXT GENERATION
-    const headerOptions = { x: 0, y: 0, fontSize: 120, anchor: 'top', attributes: { fill: 'red', stroke: 'red', 'stroke-width': 2 } };
-    const labelOptions = { x: 0, y: 0, fontSize: 80, anchor: 'top', attributes: { fill: 'black', stroke: 'black', 'stroke-width': 1.5 } };
+    // 4. TEXT LAYERS
+    const headerOptions = {
+      x: 0, y: 0, fontSize: 120, anchor: 'top',
+      attributes: { fill: 'red', stroke: 'red', 'stroke-width': 2 }
+    };
+    const labelOptions = {
+      x: 0, y: 0, fontSize: 80, anchor: 'top',
+      attributes: { fill: 'black', stroke: 'black', 'stroke-width': 1.5 }
+    };
 
     const createTextLayer = (text, options) => {
       try {
         return Buffer.from(textToSVG.getSVG(text, options));
       } catch (e) {
-        throw new Error(`Failed to generate text: "${text}"`);
+        throw new Error(`Failed to generate text layer: "${text}" | ${e.message}`);
       }
     };
 
-    // const compositeManifest = [
-    //   { input: createTextLayer("GUID IMAGE", headerOptions), top: 50, left: 630 },
-    //   { input: stain, top: 200, left: 150 },
-    //   { input: createTextLayer("Kitchen Stain", labelOptions), top: 980, left: 260 },
-    //   { input: floor, top: 200, left: 1100 },
-    //   { input: createTextLayer("Kitchen Floor", labelOptions), top: 980, left: 1210 },
-    //   { input: counter, top: 1100, left: 150 },
-    //   { input: createTextLayer("Counter Top", labelOptions), top: 1860, left: 290 },
-    //   { input: cabinet, top: 1100, left: 1080 },
-    //   { input: createTextLayer("Cabinet", labelOptions), top: 1640, left: 1110 },
-    //   { input: createTextLayer("Color", labelOptions), top: 1740, left: 1150 },
-    //   { input: wall, top: 1100, left: 1490 },
-    //   { input: createTextLayer("Wall", labelOptions), top: 1640, left: 1580 },
-    //   { input: createTextLayer("Color", labelOptions), top: 1740, left: 1550 },
-    // ];
+    // 5. COMPOSITE MANIFEST
+    const compositeManifest = [
+      { input: createTextLayer("GUID IMAGE", headerOptions),  top: 50,   left: 630  },
+      { input: stain,                                          top: 200,  left: 150  },
+      { input: createTextLayer("Kitchen Stain", labelOptions), top: 980,  left: 260  },
+      { input: floor,                                          top: 200,  left: 1100 },
+      { input: createTextLayer("Kitchen Floor", labelOptions), top: 980,  left: 1210 },
+      { input: counter,                                        top: 1100, left: 150  },
+      { input: createTextLayer("Counter Top", labelOptions),   top: 1860, left: 290  },
+      { input: cabinet,                                        top: 1100, left: 1080 },
+      { input: createTextLayer("Cabinet", labelOptions),       top: 1640, left: 1110 },
+      { input: createTextLayer("Color", labelOptions),         top: 1740, left: 1150 },
+      { input: wall,                                           top: 1100, left: 1490 },
+      { input: createTextLayer("Wall", labelOptions),          top: 1640, left: 1580 },
+      { input: createTextLayer("Color", labelOptions),         top: 1740, left: 1550 },
+    ];
 
-    // 4. FINAL COMPOSITE
+    // 6. FINAL COMPOSITE
     let collageBuffer;
     try {
       collageBuffer = await sharp({
         create: { width: 2000, height: 2000, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
       })
-      .composite(compositeManifest)
-      .jpeg({ quality: 90 })
-      .toBuffer();
+        .composite(compositeManifest)
+        .jpeg({ quality: 90 })
+        .toBuffer();
     } catch (e) {
-      throw new Error(`Failed to stitch collage together | Reason: ${e.message}`);
+      throw new Error(`Failed to stitch collage | Reason: ${e.message}`);
     }
 
     const base64 = collageBuffer.toString('base64');
@@ -136,15 +130,10 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
-    // This will now print the EXACT cause of the crash
+    console.error("Handler error:", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 }
-
-
-
-
-
 
 
 

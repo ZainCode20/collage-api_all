@@ -27,8 +27,6 @@ const fetchImage = async (url, width, height) => {
 
     const response = await fetch(url);
 
-    console.log("Status:", response.status);
-
     const contentType = response.headers.get("content-type");
     console.log("Content-Type:", contentType);
 
@@ -37,7 +35,7 @@ const fetchImage = async (url, width, height) => {
     }
 
     if (!contentType || !contentType.startsWith("image")) {
-      throw new Error(`Not an image. Content-Type: ${contentType}`);
+      throw new Error(`Not an image: ${contentType}`);
     }
 
     const arrayBuffer = await response.arrayBuffer();
@@ -45,7 +43,21 @@ const fetchImage = async (url, width, height) => {
 
     console.log("Buffer size:", buffer.length);
 
-    return await sharp(buffer)
+    if (buffer.length < 1000) {
+      throw new Error("Image too small / corrupted");
+    }
+
+    const image = sharp(buffer);
+
+    // 🔥 FORCE VALIDATION
+    const metadata = await image.metadata();
+    console.log("Metadata:", metadata);
+
+    if (!metadata || !metadata.width) {
+      throw new Error("Invalid image metadata");
+    }
+
+    return await image
       .resize(width, height, { fit: 'cover' })
       .toBuffer();
 

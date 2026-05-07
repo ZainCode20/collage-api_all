@@ -8,5 +8,6 @@
   },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/collage.js" }
-  ]
+  ],
+  "installCommand": "npm install --include=optional"
 }

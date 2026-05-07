@@ -21,22 +21,38 @@ export default async function handler(req, res) {
     const { stainUrl, floorUrl, counterUrl, cabinetUrl, wallUrl } = req.body;
 
     // 2. BULLETPROOF IMAGE FETCHER
-    const fetchImage = async (url, width, height) => {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
-        
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        
-        // If the file is less than 500 bytes, it's not a real image (likely an HTML error page)
-        if (buffer.length < 500) throw new Error(`File is too small (${buffer.length} bytes). Likely blocked by server.`);
+const fetchImage = async (url, width, height) => {
+  try {
+    console.log("Fetching:", url);
 
-        return await sharp(buffer).resize(width, height, { fit: 'cover' }).toBuffer();
-      } catch (e) {
-        throw new Error(`Failed on image: ${url} | Reason: ${e.message}`);
-      }
-    };
+    const response = await fetch(url);
+
+    console.log("Status:", response.status);
+
+    const contentType = response.headers.get("content-type");
+    console.log("Content-Type:", contentType);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    if (!contentType || !contentType.startsWith("image")) {
+      throw new Error(`Not an image. Content-Type: ${contentType}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    console.log("Buffer size:", buffer.length);
+
+    return await sharp(buffer)
+      .resize(width, height, { fit: 'cover' })
+      .toBuffer();
+
+  } catch (e) {
+    throw new Error(`Failed on image: ${url} | ${e.message}`);
+  }
+};
 
     // Fetch images and wait for all to finish
     const [stain, floor, counter, cabinet, wall] = await Promise.all([

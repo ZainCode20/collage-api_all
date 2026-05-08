@@ -21,14 +21,9 @@ export default async function handler(req, res) {
   try {
     // STEP 2: Use built-in font — no file needed on server
     const textToSVG = TextToSVG.loadSync();
+    const body = req.body;
 
-    const { stainUrl, floorUrl, counterUrl, cabinetUrl, wallUrl } = req.body;
-
-    if (!stainUrl || !floorUrl || !counterUrl || !cabinetUrl || !wallUrl) {
-      return res.status(400).json({ error: 'Missing required image URLs' });
-    }
-
-    // STEP 3: Fetch images
+    // STEP 3: Centralized image fetcher
     const fetchImage = async (url, width, height) => {
       const response = await fetch(url, {
         redirect: 'follow',
@@ -55,38 +50,98 @@ export default async function handler(req, res) {
         .toBuffer();
     };
 
-    const [stain, floor, counter, cabinet, wall] = await Promise.all([
-      fetchImage(stainUrl,   750, 750),
-      fetchImage(floorUrl,   750, 750),
-      fetchImage(counterUrl, 750, 750),
-      fetchImage(cabinetUrl, 360, 500),
-      fetchImage(wallUrl,    360, 500),
-    ]);
-
-    // STEP 4: Text layers
+    // Centralized text layer helper
+    const t = (text, opts) => Buffer.from(textToSVG.getSVG(text, opts));
+    
+    let compositeArray = [];
     const headerOptions = { x: 0, y: 0, fontSize: 120, anchor: 'top', attributes: { fill: 'red', stroke: 'red', 'stroke-width': 2 } };
     const labelOptions  = { x: 0, y: 0, fontSize: 80,  anchor: 'top', attributes: { fill: 'black', stroke: 'black', 'stroke-width': 1.5 } };
-    const t = (text, opts) => Buffer.from(textToSVG.getSVG(text, opts));
 
-    // STEP 5: Composite
+    // --- TEMPLATE 3: Island Guide (2 Images) ---
+    if (body.islandCountertop && body.islandCabinets) {
+      const [countertopImg, cabinetsImg] = await Promise.all([
+        fetchImage(body.islandCountertop, 800, 800),
+        fetchImage(body.islandCabinets,   800, 800),
+      ]);
+
+      const islandHeaderOpts = { ...headerOptions, fontSize: 130 };
+      const islandLabelOpts  = { ...labelOptions, fontSize: 90 };
+
+      compositeArray = [
+        { input: t("ISLAND GUIDE", islandHeaderOpts), top: 100,  left: 750  },
+        { input: countertopImg,                       top: 300,  left: 100  },
+        { input: t("Island Countertop", islandLabelOpts), top: 1150, left: 100  },
+        { input: cabinetsImg,                         top: 300,  left: 1100 },
+        { input: t("Island Cabinets", islandLabelOpts),   top: 1150, left: 1100 },
+      ];
+    }
+    
+    // --- TEMPLATE 1: Full Kitchen (5 Images: Stain + Cabinet + Floor + Counter + Wall) ---
+    else if (body.stainUrl && body.cabinetUrl && body.floorUrl && body.counterUrl && body.wallUrl) {
+      const [stain, floor, counter, cabinet, wall] = await Promise.all([
+        fetchImage(body.stainUrl,   750, 750),
+        fetchImage(body.floorUrl,   750, 750),
+        fetchImage(body.counterUrl, 750, 750),
+        fetchImage(body.cabinetUrl, 360, 500),
+        fetchImage(body.wallUrl,    360, 500),
+      ]);
+
+      compositeArray = [
+        { input: t("GUIDE IMAGE", headerOptions), top: 50,   left: 630  },
+        { input: stain,                           top: 200,  left: 150  },
+        { input: t("Kitchen Stain", labelOptions),top: 980,  left: 260  },
+        { input: floor,                           top: 200,  left: 1100 },
+        { input: t("Kitchen Floor", labelOptions),top: 980,  left: 1210 },
+        { input: counter,                         top: 1100, left: 150  },
+        { input: t("Counter Top",   labelOptions),top: 1860, left: 290  },
+        { input: cabinet,                         top: 1100, left: 1080 },
+        { input: t("Cabinet",       labelOptions),top: 1640, left: 1110 },
+        { input: t("Color",         labelOptions),top: 1740, left: 1150 },
+        { input: wall,                            top: 1100, left: 1490 },
+        { input: t("Wall",          labelOptions),top: 1640, left: 1580 },
+        { input: t("Color",         labelOptions),top: 1740, left: 1550 },
+      ];
+    }
+    
+    // --- TEMPLATE 2: Kitchen (4 Images: Stain + Floor + Counter + Wall) ---
+    // If it reaches here, it means we have a stainUrl but NO cabinetUrl
+    else if (body.stainUrl && body.floorUrl && body.counterUrl && body.wallUrl) {
+      const [stain, floor, counter, wall] = await Promise.all([
+        fetchImage(body.stainUrl, 750, 750),
+        fetchImage(body.floorUrl,   750, 750),
+        fetchImage(body.counterUrl, 750, 750),
+        fetchImage(body.wallUrl,    750, 750), 
+      ]);
+
+      compositeArray = [
+        { input: t("GUIDE IMAGE", headerOptions), top: 50,   left: 630  },
+        
+        // Row 1
+        { input: stain,                           top: 200,  left: 150  },
+        { input: t("Kitchen Stain", labelOptions),top: 980,  left: 260  },
+        { input: floor,                           top: 200,  left: 1100 },
+        { input: t("Kitchen Floor", labelOptions),top: 980,  left: 1210 },
+        
+        // Row 2
+        { input: counter,                         top: 1100, left: 150  },
+        { input: t("Counter Top",   labelOptions),top: 1860, left: 290  },
+        { input: wall,                            top: 1100, left: 1100 },
+        { input: t("Wall Color",    labelOptions),top: 1860, left: 1280 },
+      ];
+    } 
+    
+    // --- Error: Missing or mismatched parameters ---
+    else {
+      return res.status(400).json({ 
+        error: 'Missing or incorrect image URLs. Please provide the proper keys for the 5-image, 4-image (Stain instead of Cabinet), or 2-image collage templates.' 
+      });
+    }
+
+    // STEP 4: Final composite execution
     const collageBuffer = await sharp({
       create: { width: 2000, height: 2000, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
     })
-    .composite([
-      { input: t("GUIDE IMAGE", headerOptions), top: 50,   left: 630  },
-      { input: stain,                           top: 200,  left: 150  },
-      { input: t("Kitchen Stain", labelOptions),top: 980,  left: 260  },
-      { input: floor,                           top: 200,  left: 1100 },
-      { input: t("Kitchen Floor", labelOptions),top: 980,  left: 1210 },
-      { input: counter,                         top: 1100, left: 150  },
-      { input: t("Counter Top",   labelOptions),top: 1860, left: 290  },
-      { input: cabinet,                         top: 1100, left: 1080 },
-      { input: t("Cabinet",       labelOptions),top: 1640, left: 1110 },
-      { input: t("Color",         labelOptions),top: 1740, left: 1150 },
-      { input: wall,                            top: 1100, left: 1490 },
-      { input: t("Wall",          labelOptions),top: 1640, left: 1580 },
-      { input: t("Color",         labelOptions),top: 1740, left: 1550 },
-    ])
+    .composite(compositeArray)
     .jpeg({ quality: 90 })
     .toBuffer();
 
